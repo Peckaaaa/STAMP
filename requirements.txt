@@ -1,0 +1,28 @@
+# =============================================================================
+# FSQ world model for MATE -- requirements
+#
+# This repository holds the world model and the policy only.  The environment
+# (simulator, scenario YAMLs, wrappers, builtin target agents) is imported from
+# the external MATE-main checkout, which envs/config_resolver.py puts on
+# sys.path.  It looks for ../MATE-main then ../MATE/MATE-main; MATE_ROOT
+# overrides the search.
+#
+# Verified on the `mate` conda env:
+#
+#   Python 3.13.14, gymnasium 1.2.3, torch 2.12.0+cpu, numpy 2.4.6
+#
+# MATE-main is a gymnasium port, so gym (0.26) is NOT usable here.  The mate
+# package needs only gymnasium, numpy, scipy and pyyaml at import time -- torch,
+# tensorflow, pyglet and pygame are imported lazily, for rendering and for
+# baselines this repository does not use.  So `pip install -e <MATE-main>` is not
+# required: MATE_ROOT plus the packages below is enough.
+# =============================================================================
+
+gymnasium>=1.2.0
+numpy>=1.26
+scipy>=1.11
+torch>=2.8.0
+pyyaml>=6.0.2
+
+# Optional: metric logging with --wandb
+# wandb>=0.17

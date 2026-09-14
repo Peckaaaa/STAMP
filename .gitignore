@@ -1,0 +1,109 @@
+# ---------------------------------------------------------------------------
+# Python
+# ---------------------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.hypothesis/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+
+# Packaging
+build/
+dist/
+sdist/
+wheels/
+*.egg-info/
+*.egg
+.eggs/
+.installed.cfg
+MANIFEST
+
+# ---------------------------------------------------------------------------
+# Virtual environments
+#
+# `/ENV/` is anchored on purpose: an unanchored `ENV/` also matches DIMA/env/
+# on case-insensitive filesystems and would silently drop the environment
+# wrappers, including the MATE adapter.
+# ---------------------------------------------------------------------------
+.venv/
+venv/
+/env/
+/ENV/
+env.bak/
+venv.bak/
+*.conda
+*.tar.bz2
+
+# ---------------------------------------------------------------------------
+# Editors / IDE / OS
+# ---------------------------------------------------------------------------
+.vscode/
+.idea/
+*.swp
+.ipynb_checkpoints/
+.DS_Store
+Thumbs.db
+
+# ---------------------------------------------------------------------------
+# Experiment outputs
+#
+# train.py writes run directories as <MMDD>_results/ (see train.py: run_dir),
+# copies agent/, configs/ and networks/ into them, and saves checkpoints under
+# <run_dir>/ckpt/.  tb_logger writes to tb_logs/.  None of that is source.
+# ---------------------------------------------------------------------------
+*_results/
+results/
+runs/
+outputs/
+logs/
+checkpoints/
+ckpt/
+wandb/
+tb_logs/
+tensorboard/
+
+# Collected MATE trajectories (research/collect.py).  Regenerate with:
+#   python -m research.collect --out datasets/<name> --episodes N
+datasets/
+mujoco_visualization/
+grf_replays/
+*.out
+
+# Model / data artifacts
+*.pt
+*.pth
+*.ckpt
+*.pkl
+*.h5
+*.hdf5
+*.npz
+
+# ---------------------------------------------------------------------------
+# Logs and temporary files
+# ---------------------------------------------------------------------------
+*.log
+*.tmp
+*.bak
+
+# ---------------------------------------------------------------------------
+# Secrets -- never commit
+# ---------------------------------------------------------------------------
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+*.p12
+id_rsa
+id_rsa.*
+credentials.json
+secrets.json
+service-account*.json
+.netrc
