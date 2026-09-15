@@ -101,8 +101,26 @@ ask about:
 
 Five steps, in order. Every command below was run to produce the numbers above.
 
-**1. Install.** Python 3.13, and `MATE-main` sitting next to this README (it is a
-source checkout, not a package — nothing installs it):
+**1. Install.** Python 3.10+, and `MATE-main` sitting next to this README (it is
+a source checkout, not a package — nothing installs it). Check the interpreter
+*before* installing — a cloud box's system `python3` is 3.8 more often than
+not, and `pip install -r requirements.txt` fails on it with a confusing
+"no matching distribution" rather than a clear version error:
+
+```bash
+python3 --version                  # must read 3.10 or higher
+```
+
+If it does not, get a newer one rather than editing `requirements.txt` — this
+checkout of MATE was verified against numpy 2.x, and installing on 3.8 would
+silently fall back to numpy 1.x instead:
+
+```bash
+conda create -n stamp python=3.11 && conda activate stamp
+# or, without conda: pyenv install 3.11.9 && pyenv local 3.11.9
+```
+
+Then:
 
 ```bash
 python -m venv .venv

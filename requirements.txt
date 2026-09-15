@@ -1,5 +1,21 @@
 # STAMP -- what the pipeline imports, and nothing else.
 #
+# Requires Python 3.10+.  gymnasium>=1.2.0 ships no wheel for 3.9 or below (pip
+# resolves it to 1.1.1 there, silently) and numpy>=2.0 refuses to install below
+# 3.9 at all.  On a cloud box whose system `python3` is still 3.8 (Ubuntu 20.04
+# TPU/GPU images, most commonly) `pip install -r requirements.txt` fails with
+# "No matching distribution found for gymnasium<2,>=1.2.0" -- that error means
+# the interpreter, not this file, needs upgrading.  Check first:
+#
+#   python3 --version
+#
+# If it is below 3.10, get a newer interpreter rather than loosening the pins
+# below -- this checkout of MATE was verified against numpy 2.x, and quietly
+# falling back to numpy 1.x changes what is actually being run:
+#
+#   conda create -n stamp python=3.11 && conda activate stamp
+#   # or, without conda: pyenv install 3.11.9 && pyenv local 3.11.9
+#
 # Verified combination (Python 3.13, CPU):
 #   gymnasium 1.2.3 | numpy 2.4.6 | scipy 1.17.1 | torch 2.12.0 | PyYAML 6.0.3
 #

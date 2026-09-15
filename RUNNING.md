@@ -39,6 +39,14 @@ time.
 Verified combination: Python 3.13, gymnasium 1.2.3, numpy 2.4, scipy 1.11,
 torch 2.12.
 
+**Python 3.10 is the floor, not a suggestion.** `gymnasium>=1.2.0` has no wheel
+below 3.9 and `numpy>=2.0` refuses to install below 3.9 either; in practice both
+mean 3.10 in the wild, since that is where the tested combinations start. A
+cloud VM's system `python3` defaulting to 3.8 (stock on Ubuntu 20.04, which most
+GCP/TPU images still ship) fails `pip install -r requirements.txt` with "No
+matching distribution found for gymnasium<2,>=1.2.0" — `python3 --version`
+first, before debugging anything else.
+
 ---
 
 ## 2. Install
