@@ -389,6 +389,21 @@ def main():
     # The number the comparison is made on: more episodes than the periodic
     # evaluation, so the standard error is small enough to separate conditions.
     final = evaluate_planner(eval_env, eval_planner, trajectory, args.final_episodes)
+    # The periodic branch above is the only other writer, so a run whose
+    # `eval_every` never came up would otherwise finish with a results.json and
+    # no weights at all.  Writing here costs one save and makes every run
+    # recoverable.
+    torch.save(
+        {
+            'env_steps': env_steps,
+            'trajectory': trajectory.state_dict(),
+            'obs_rms': env.obs_rms.state_dict(),
+            'state_rms': env.state_rms.state_dict(),
+            'config': copy.deepcopy(config),
+        },
+        os.path.join(directory, 'checkpoint.pt'),
+    )
+
     results = {
         'seed': seed,
         'tag': train_config['tag'],

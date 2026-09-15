@@ -1,28 +1,41 @@
-# =============================================================================
-# FSQ world model for MATE -- requirements
+# STAMP -- what the pipeline imports, and nothing else.
 #
-# This repository holds the world model and the policy only.  The environment
-# (simulator, scenario YAMLs, wrappers, builtin target agents) is imported from
-# the external MATE-main checkout, which envs/config_resolver.py puts on
-# sys.path.  It looks for ../MATE-main then ../MATE/MATE-main; MATE_ROOT
-# overrides the search.
+# Verified combination (Python 3.13, CPU):
+#   gymnasium 1.2.3 | numpy 2.4.6 | scipy 1.17.1 | torch 2.12.0 | PyYAML 6.0.3
 #
-# Verified on the `mate` conda env:
-#
-#   Python 3.13.14, gymnasium 1.2.3, torch 2.12.0+cpu, numpy 2.4.6
-#
-# MATE-main is a gymnasium port, so gym (0.26) is NOT usable here.  The mate
-# package needs only gymnasium, numpy, scipy and pyyaml at import time -- torch,
-# tensorflow, pyglet and pygame are imported lazily, for rendering and for
-# baselines this repository does not use.  So `pip install -e <MATE-main>` is not
-# required: MATE_ROOT plus the packages below is enough.
-# =============================================================================
+# The simulator is NOT installed from here.  `MATE-main` is a source checkout
+# next to this file; `src/envs/config_resolver.py` puts it on the path, and
+# `MATE_ROOT` overrides where it looks.  Do not `pip install -e MATE-main`:
+# its pyproject pulls jupyter, matplotlib, pandas, stable-baselines3, OpenCV,
+# pygame and swig, none of which this pipeline touches -- measured by importing
+# `mate` and stepping the wrapper with all nine blocked.
 
-gymnasium>=1.2.0
-numpy>=1.26
+# --- the environment ---------------------------------------------------------
+# MATE-main is a gymnasium port.  The old `gym` (0.26) package cannot run it;
+# if both are installed, neither is used by accident -- nothing here imports gym.
+gymnasium>=1.2.0,<2
+# 2.x is required: this checkout of MATE is not numpy-1.x compatible.
+numpy>=2.0,<3
+# mate.utils imports scipy.interpolate at module load.
 scipy>=1.11
-torch>=2.8.0
-pyyaml>=6.0.2
+# Scenario files under mate/assets are YAML.
+PyYAML>=6.0.2
 
-# Optional: metric logging with --wandb
+# --- the learned part --------------------------------------------------------
+# The flow-matching head and the MPPI planner are both plain torch; no CUDA is
+# required, and on this problem size a GPU is a modest speedup because the
+# simulator itself is single-threaded numpy.  For a CUDA build, install torch
+# from the PyTorch index instead of this line:
+#     pip install --index-url https://download.pytorch.org/whl/cu124 torch
+torch>=2.8
+
+# --- optional ----------------------------------------------------------------
+# Dashboard logging, enabled with `--wandb`.  `metrics.jsonl` is written either
+# way, so a cluster with no outbound network loses nothing by omitting this.
 # wandb>=0.17
+#
+# Rendering only (`env.render()`).  The training, evaluation and baseline paths
+# never import these:
+# pygame>=2.6.1
+# pyglet==1.5.27
+# Pillow>=10

@@ -1,24 +1,39 @@
-"""Phase 0: the floor, the ceiling, and what oracle fusion is worth.
+"""Every method on this task, scored under one protocol.
 
-Three questions, one protocol (same scenario, same episode seeds, same
-coverage-rate definition the training loop logs):
+One command, one table.  The rule agents MATE ships, and a trained checkpoint if
+one is given, all replay the *same* episode seeds against the same opponents for
+the same episode length, under the coverage-rate definition the training loop
+logs -- so the rows can be read against each other, and against
+``eval/coverage_rate``, with no footnote.
 
-  floor    what do MATE's own rule-based camera agents score?
-  ceiling  how much coverage does a perfect, free, instantaneous field-of-view
-           fusion add on top of each of them?
-  where    where does the trained diffusion world-model policy sit between them?
+    python baseline.py --episodes 20
+    python baseline.py --episodes 20 --checkpoint runs/v1/seed1/best.pt
+    python baseline.py --episodes 20 --matrix       # the fusion cross, below
 
-The fusion column is the go/no-go for the belief-fusion and consensus blocks:
-no learned peer-to-peer scheme can beat an oracle that hands every camera the
-union of the team's field of view for free, so if the oracle gain is small the
-blocks cannot pay for themselves.
+Three questions the table answers:
 
-Every configuration replays the *same* episode seeds, so the fusion delta is a
-paired comparison on identical layouts rather than two independent samples.
+  floor    what do the rule agents score, and how much of that is coordination
+           rather than looking?  ``random`` is the floor; ``greedy`` is the bar
+           a learned policy has to clear, and it is a high one.
+  ceiling  ``--matrix`` re-runs every agent with and without MATE's message
+           round and with and without oracle field-of-view fusion, and prints
+           the paired deltas.  No learned peer-to-peer scheme can beat an oracle
+           that hands every camera the union of the team's view for free, so the
+           oracle column is the go/no-go for the belief-fusion blocks.
+  where    a checkpoint sits between them.  When its planner carries search
+           terms it is scored twice -- as trained, and with the terms switched
+           off -- which is the ablation, not a second run: the terms live in the
+           reward rather than in any weights.
 
-Run:
-    python phase0.py --episodes 30
-    python phase0.py --episodes 30 --checkpoint runs/.../checkpoint.pt
+MAPPO and MAPPO+HRL are **not** run here.  Reproducing them needs an
+actor-critic and a hierarchical action wrapper that neither this repository nor
+``MATE-main`` ships, trained for the 10M environment steps the MATE paper used
+-- roughly forty hours at this machine's throughput.  Their published numbers
+are printed under the table, marked as what they are: read off a figure in
+someone else's paper, not measured by this script.
+
+Every configuration replays the same episode seeds, so a delta between two rows
+is a paired comparison on identical layouts rather than two independent samples.
 """
 
 import argparse
@@ -182,7 +197,8 @@ def run_rule_agent(
     }
 
 
-def run_checkpoint(path, device, episodes, base_seed, shared_fov, scenario=None):
+def run_checkpoint(path, device, episodes, base_seed, shared_fov,
+                   scenario=None, overrides=None):
     """A trained run under the same protocol as the rule agents.
 
     A checkpoint holds the trajectory head and the configuration it was trained
@@ -216,6 +232,8 @@ def run_checkpoint(path, device, episodes, base_seed, shared_fov, scenario=None)
     trajectory = build_trajectory(env_spec(env), config)
     trajectory.load_state_dict(checkpoint['trajectory'])
     trajectory.head.eval()
+    if overrides:
+        config['planner'].update(overrides)
     planner = build_planner(config, device=device)
 
     metrics = evaluate_planner(env, planner, trajectory, episodes)
@@ -232,6 +250,15 @@ def run_checkpoint(path, device, episodes, base_seed, shared_fov, scenario=None)
 
 SETTINGS = ('nocomm', 'nocomm+fov', 'comm', 'comm+fov')
 
+#: Published elsewhere, printed for orientation, never measured by this script.
+#: The MATE paper's Figure 4a, 4C vs. 8T (9O), at 10M environment steps; the
+#: model-free MAPPO row is this repository's own earlier run at 150k steps.
+PUBLISHED = (
+    ('MAPPO + HRL', 0.55, 'MATE paper, Fig. 4a, 10M steps'),
+    ('IPPO + HRL', 0.52, 'MATE paper, Fig. 4a, 10M steps'),
+    ('MAPPO, model-free', 0.3405, 'this repository, 150k steps'),
+)
+
 
 def paired_delta(row, better, worse):
     """Mean per-episode difference; the two settings replayed the same seeds."""
@@ -242,7 +269,33 @@ def paired_delta(row, better, worse):
     return float(differences.mean()), float(differences.std())
 
 
-def report(row):
+def format_table(rows, setting):
+    """The comparison as markdown, weakest policy first."""
+
+    def cell(value, places=4):
+        return '--' if value != value else f'{value:.{places}f}'
+
+    lines = [
+        '| Policy | Coverage | +- | Per-camera view | Team union |',
+        '|---|---|---|---|---|',
+    ]
+    scored = [(row, row.get(setting)) for row in rows]
+    scored = [(row, result) for row, result in scored if result is not None]
+    scored.sort(key=lambda pair: pair[1]['coverage_rate'])
+
+    for row, result in scored:
+        lines.append(
+            f"| {row['policy']} | {cell(result['coverage_rate'])} "
+            f"| {cell(result['coverage_rate_std'])} "
+            f"| {cell(result['per_camera_visibility'], 3)} "
+            f"| {cell(result['union_visibility'], 3)} |"
+        )
+    return '\n'.join(lines)
+
+
+def report_matrix(row):
+    """The fusion cross for one agent, with the paired deltas underneath."""
+
     print()
     print(row['policy'])
     for setting in SETTINGS:
@@ -316,22 +369,100 @@ def parse_args():
     parser.add_argument('--seed', type=int, default=12345)
     parser.add_argument('--agents', type=str, nargs='*', default=list(AGENTS), choices=AGENTS)
     parser.add_argument(
+        '--matrix',
+        action='store_true',
+        help='run every agent under all four communication/fusion settings and '
+             'report the paired deltas, instead of one table under --setting',
+    )
+    parser.add_argument(
+        '--setting',
+        type=str,
+        default='comm',
+        choices=SETTINGS,
+        help="which setting the table is scored under (default: MATE's own "
+             'message round, no oracle)',
+    )
+    parser.add_argument(
         '--greedy-memory',
         type=int,
         default=None,
         help="GreedyCameraAgent's memory window in steps (MATE's default is 25)",
     )
     parser.add_argument('--checkpoint', type=str, default=None)
+    parser.add_argument(
+        '--no-ablation',
+        action='store_true',
+        help='score a checkpoint only as trained, skipping the search-off row',
+    )
     parser.add_argument('--device', type=str, default='cpu')
-    parser.add_argument('--out', type=str, default='runs/phase0/results.json')
+    parser.add_argument('--out', type=str, default='runs/baseline/results.json')
     return parser.parse_args()
+
+
+def checkpoint_rows(args, settings):
+    """A trained run, and the same weights with the search terms switched off.
+
+    The ablation is free: the search terms are part of the planner's reward
+    rather than of any weights, so switching them off is a second score of the
+    same checkpoint rather than a second run.
+    """
+
+    import torch
+
+    configuration = torch.load(
+        args.checkpoint, map_location='cpu', weights_only=False
+    )['config']
+    searching = any(
+        configuration['planner'].get(key)
+        for key in ('explore_weight', 'recall_weight', 'angle_weight')
+    )
+
+    variants = [('planning + search' if searching else 'planning', None)]
+    if searching and not args.no_ablation:
+        variants.append(
+            (
+                'planning, tracking only',
+                {'explore_weight': 0.0, 'recall_weight': 0.0, 'angle_weight': 0.0},
+            )
+        )
+
+    rows = []
+    for label, overrides in variants:
+        row = {'policy': label}
+        for setting in settings:
+            if setting.startswith('nocomm'):
+                # The wrapper's channel is what builds the belief the planner
+                # reads, so scoring it with the channel off would be a different
+                # pipeline rather than a different setting.
+                continue
+            row[setting] = run_checkpoint(
+                args.checkpoint,
+                args.device,
+                args.episodes,
+                args.seed,
+                shared_fov=setting.endswith('fov'),
+                scenario=args.scenario,
+                overrides=overrides,
+            )
+            print(
+                f"  {label:>24} / {setting:<10} "
+                f"coverage {row[setting]['coverage_rate']:.4f}",
+                flush=True,
+            )
+        rows.append(row)
+    return rows
 
 
 def main():
     args = parse_args()
     ensure_mate_importable()
     scenario = resolve_scenario(args.scenario)
-    print(f'{scenario} | {args.episodes} episodes x {args.max_episode_steps} steps | seed {args.seed}')
+    settings = SETTINGS if args.matrix else (args.setting,)
+
+    print(
+        f'{scenario} | {args.episodes} episodes x {args.max_episode_steps} steps '
+        f'| seed {args.seed} | setting {"matrix" if args.matrix else args.setting}'
+    )
 
     rows = []
     for name in args.agents:
@@ -339,52 +470,45 @@ def main():
         if args.greedy_memory is not None and name == 'greedy':
             label = f'{name} (memory {args.greedy_memory})'
         row = {'policy': label}
-        for setting in SETTINGS:
+        for setting in settings:
             communicate = setting.startswith('comm')
             shared_fov = setting.endswith('fov')
             if not communicate and name in REQUIRES_COMMUNICATION:
                 continue
-            start = time.time()
-            result = run_rule_agent(
+            row[setting] = run_rule_agent(
                 scenario,
                 name,
                 args.episodes,
                 args.max_episode_steps,
                 args.seed,
-                shared_fov,
-                communicate,
-                args.greedy_memory,
+                shared_fov=shared_fov,
+                communicate=communicate,
+                memory_period=args.greedy_memory,
             )
-            result['seconds'] = time.time() - start
-            row[setting] = result
+            print(
+                f'  {label:>24} / {setting:<10} '
+                f"coverage {row[setting]['coverage_rate']:.4f}",
+                flush=True,
+            )
         rows.append(row)
-        report(row)
         write_results(args, scenario, rows)
 
-    if args.checkpoint is not None:
-        # The learned policy carries its own message head, so its two settings
-        # are the communicating ones.
-        row = {'policy': f'checkpoint: {os.path.basename(os.path.dirname(args.checkpoint))}'}
-        for setting, shared_fov in (('comm', False), ('comm+fov', True)):
-            row[setting] = run_checkpoint(
-                args.checkpoint, args.device, args.episodes, args.seed, shared_fov, args.scenario
-            )
-        rows.append(row)
-        report(row)
+    if args.checkpoint:
+        rows.extend(checkpoint_rows(args, settings))
+        write_results(args, scenario, rows)
 
-    os.makedirs(os.path.dirname(args.out) or '.', exist_ok=True)
-    with open(args.out, 'w', encoding='utf-8') as handle:
-        json.dump(
-            {
-                'scenario': scenario,
-                'episodes': args.episodes,
-                'max_episode_steps': args.max_episode_steps,
-                'seed': args.seed,
-                'rows': rows,
-            },
-            handle,
-            indent=2,
-        )
+    if args.matrix:
+        for row in rows:
+            report_matrix(row)
+    else:
+        print()
+        print(format_table(rows, args.setting))
+
+    print()
+    print('Published elsewhere, not measured here:')
+    for label, coverage, source in PUBLISHED:
+        print(f'  {label:<20} {coverage:.4f}   {source}')
+
     print(f'\nwritten to {args.out}')
 
 

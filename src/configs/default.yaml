@@ -1,0 +1,114 @@
+# Override any leaf from the command line: python train.py --set planner.samples=128
+
+env:
+  # Resolved against MATE-main/mate/assets (MATE_ROOT overrides the checkout).
+  scenario: MATE-4v8-9
+  max_episode_steps: 200      # MATE steps per episode
+  # frame_skip 5 was tried and reverted: same coverage ceiling but reached far
+  # later, because a 5-step jump widens the gap the trajectory head has to cross
+  # and spreads the same number of transitions over five times the state space.
+  frame_skip: 1
+  camera_comm: true
+  # Peer-to-peer reach in map units.  Cameras in this scenario sit 1015 apart at
+  # the closest and 1406 at the median, so a shorter reach disconnects the team
+  # and an unlimited one makes every camera merge to the same union -- which
+  # collapses the peer-to-peer belief into a broadcast and drives the consensus
+  # term to exactly zero.  At 1500 roughly two thirds of the pairs can talk.
+  comm_range: 1500.0
+  # Oracle field-of-view fusion: every camera observes the union of the team's
+  # view.  Not deployable -- it is the ceiling `baseline.py` measures against.
+  shared_fov: false
+  reward_scale: 1.0
+  seed: 0
+
+trajectory:
+  # Steps ahead the flow head generates for every believed target.  Four is what
+  # a camera can act on: rotation is capped at 5 deg/step, so a longer roll
+  # changes nothing it could reach in time.
+  horizon: 4
+  hidden_dim: 256
+  # Targets move about 0.013 belief units per step per axis here, so labels are
+  # scaled to O(1) before the unit-Gaussian prior sees them.
+  displacement_scale: 75.0
+  # Euler steps when sampling a future.  Four is enough for a 64-dimensional
+  # sample and keeps a decision inside one millisecond on GPU.
+  sample_steps: 4
+  lr: 3.0e-4
+  # 0.5, not 1.0: the flow-matching target is a velocity, so an early batch of
+  # mostly-noise interpolants can produce a much larger gradient than a typical
+  # one, and the head is the only thing in the loop that can be destabilized.
+  max_grad_norm: 0.5
+  # Small on purpose.  Agreement alone has a trivial optimum -- every camera
+  # predicting the same constant -- so it is a nudge beside the supervised
+  # anchor, and the two losses are logged apart to catch that failure.
+  consensus_weight: 0.1
+
+planner:
+  # Candidates are scored against the sampled target trajectories through MATE's
+  # own camera optics, which are closed-form, so a candidate costs arithmetic
+  # rather than a generative rollout.
+  samples: 64
+  # Softmax sharpness over candidate returns.  Lower commits to the best plan,
+  # higher averages over near-ties.
+  temperature: 0.05
+  # Exploration width as a fraction of the action box half-range.
+  noise_scale: 0.6
+  discount: 0.95
+  # Soft detection margins, in map units and degrees.  A hard in-or-out count is
+  # flat almost everywhere and a softmax over a flat landscape is a coin flip.
+  range_softness: 60.0
+  angle_softness: 6.0
+  # How much of a neighbour's published claim to subtract from a target's worth.
+  # Coverage counts distinct targets, so without this the cameras that share a
+  # belief all plan the same sweep.
+  intent_discount: 0.8
+
+  # --- active search -------------------------------------------------------
+  # Every term below is part of the reward, not of any weights: a checkpoint
+  # trained under one setting can be scored under another (search_eval.py), and
+  # all-zero reproduces the tracking-only policy exactly.
+
+  # Worth of sweeping a stale map cell, relative to covering a believed target.
+  # Measured optimum is a plateau over 0.075-0.15; it is the term that pays for
+  # looking for targets nobody believes in, which the tracking reward weights at
+  # exactly zero.  The scale is the horizon-summed one: 0.4 is measurably worse
+  # (0.59 against 0.65 over ten episodes), which is what puts this value inside
+  # the plateau rather than under it.
+  explore_weight: 0.1
+  # Each cell counts only for the camera nearest to it.  Without the split every
+  # camera reads the same map and they all turn towards the same stale corner.
+  explore_voronoi: true
+
+  # Revisiting the ring a lost target could have drifted onto.  Measured at
+  # +0.043, inside the noise of the protocol, so it ships switched off and stays
+  # here as the configuration that measurement was taken under.
+  recall_weight: 0.0
+  recall_tau: 5.0          # confidence half-life in decisions
+  recall_max_age: 8.0      # past this the ring is wider than a sector
+  recall_hypotheses: 4     # points sampled on the ring
+  recall_drift: 17.0       # map units a target moves per decision, measured
+
+  # Opening the aperture when there is little left to track.  Same story: a real
+  # effect on one seed that did not survive the others.
+  angle_weight: 0.0
+  angle_threshold: 2.0     # targets' worth above which the bonus is gone
+
+train:
+  # Every step budget counts MATE steps, not decisions, so it stays comparable
+  # across frame-skip settings.
+  total_env_steps: 50000
+  env_steps_per_iter: 1000
+  # Random commands until the head has seen something: its samples are noise
+  # before that, and a planner chasing noise fills the buffer more slowly.
+  warmup_steps: 2000
+  trajectory_updates_per_iter: 20
+  trajectory_batch_size: 256
+  buffer_capacity: 200000
+  eval_every: 10
+  eval_episodes: 20
+  device: auto
+  # Pinned host memory makes the buffer's host-to-device copy asynchronous.
+  # Ignored on CPU.
+  pin_memory: true
+  wandb: true
+  save_dir: null    # set from --tag and --seed unless --save-dir is given

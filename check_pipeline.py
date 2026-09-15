@@ -64,7 +64,7 @@ def main():
     predicted, mask = trajectory.predict(beliefs)
     actions, intent = planner.plan(
         current['camera_states'], predicted, mask, current['peer_intent'],
-        env.action_low, env.action_high,
+        env.action_low, env.action_high, search=current['search'],
     )
 
     checks = {
@@ -80,6 +80,21 @@ def main():
         print(f'  {name:<11} {tuple(tensor.shape)}  {tensor.device}')
 
     assert float(actions.abs().max()) <= 1.0 + 1e-5, 'actions must stay in the normalized box'
+
+    # The spatial memory is numpy and lives beside the belief, so it is checked
+    # by shape rather than by device.  A fresh episode starts maximally stale:
+    # nothing has been looked at yet, and a zeroed map would give the search
+    # term nothing to pull towards on the first decisions.
+    search = current['search']
+    cells = env.GRID_SIZE ** 2
+    assert search['cell_centres'].shape == (cells, 2), search['cell_centres'].shape
+    assert search['staleness'].shape == (n, cells), search['staleness'].shape
+    assert search['last_seen'].shape == (n, targets, 2), search['last_seen'].shape
+    print(
+        f'  search      cells {search["cell_centres"].shape} | '
+        f'staleness {search["staleness"].shape} '
+        f'mean {float(search["staleness"].mean()):.3f}'
+    )
 
     # ------------------------------------------------------- one training step
     buffer = TrajectoryBuffer(

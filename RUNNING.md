@@ -147,7 +147,7 @@ figure rather than merely converged.
 These need no training and set the floor and the ceiling of the whole study:
 
 ```bash
-python phase0.py --episodes 30 --out runs/v1/phase0.json
+python baseline.py --episodes 30 --out runs/v1/baseline.json
 ```
 
 It reports `random`, `naive`, `greedy` and `heuristic` under four settings each
@@ -159,7 +159,7 @@ paired rather than two independent samples.
 Score a trained run under exactly the same protocol:
 
 ```bash
-python phase0.py --episodes 30 --agents greedy --checkpoint runs/v1/seed1/best.pt
+python baseline.py --episodes 30 --agents greedy --checkpoint runs/v1/seed1/best.pt
 python evaluate.py --checkpoint runs/v1/seed1/best.pt --episodes 50
 ```
 
@@ -178,6 +178,49 @@ compared against these:
 | heuristic rule | 0.5934 |
 | greedy rule | 0.6028 |
 | greedy rule + oracle field of view | 0.6372 |
+| MPPI planning, flow head, active search | 0.6701 |
+
+### Active search
+
+The three search terms live in the planner's reward, not in any weights, so a
+configuration is scored on a checkpoint trained under a different one:
+
+```bash
+python search_eval.py --checkpoint runs/v1/seed1/best.pt --episodes 20 \
+    --set planner.explore_weight=0.1
+```
+
+`explore_weight` is the one that pays: cells of a 16x16 staleness map, each
+worth how many decisions it has gone unseen, split between cameras by Voronoi.
+`recall_weight` (the drift ring around a lost target's last fix) and
+`angle_weight` (opening the aperture when there is little to track) both ship at
+zero -- measured, inside the noise, kept so the measurement can be repeated.
+The whole block is documented in `src/configs/default.yaml`.
+
+Scored on a 6000-step CPU checkpoint, twenty episodes each, same episode seeds,
+same checkpoint -- only `explore_weight` differs:
+
+| Configuration | Coverage | Episode std | Acquisition | Union |
+|---|---|---|---|---|
+| tracking only | 0.4504 | 0.095 | 0.0094 | 0.449 |
+| `explore_weight=0.1` | 0.6305 | 0.094 | 0.0125 | 0.629 |
+
+Turning the Voronoi split off costs about 0.05 (0.6805 against 0.6328 over five
+episodes on a shorter checkpoint): without it every camera reads the same map
+and they all turn towards the same stale corner.
+
+`acquisition` -- slot observations per decision that went unknown to known -- is
+what the term acts on directly; coverage sits at the end of that chain and needs
+many more episodes before a difference means anything.
+
+**The noise floor is larger than it looks.** The flow head samples, so repeating
+`search_eval.py` on the same checkpoint, the same configuration and the same
+episode seeds does not repeat the number. Measured over four repeats at ten
+episodes: 0.6269, 0.6569, 0.6743, 0.6493 -- a spread of 0.047. Anything under
+about 0.05 at ten episodes is nothing; a sweep at that length can invent a
+plateau that is not there. Use fifty episodes and several seeds before believing
+a difference, and prefer `acquisition` and `union`, which move earlier and
+spread less.
 
 ---
 
@@ -277,7 +320,7 @@ afterwards.
 
 **MATE-main seeding is partly broken.** `env.seed()` and `AgentBase.seed()` both
 hand a numpy integer to a gymnasium API that rejects it, and the built-in target
-agents are never seeded by the environment at all. `phase0.py` works around this
+agents are never seeded by the environment at all. `baseline.py` works around this
 by setting the agents' generators directly — do not "fix" that code by calling
 the official API, it raises.
 

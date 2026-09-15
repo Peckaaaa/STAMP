@@ -69,10 +69,6 @@ wandb/
 tb_logs/
 tensorboard/
 
-# Collected MATE trajectories (research/collect.py).  Regenerate with:
-#   python -m research.collect --out datasets/<name> --episodes N
-datasets/
-mujoco_visualization/
 grf_replays/
 *.out
 
