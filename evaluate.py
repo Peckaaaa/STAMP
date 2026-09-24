@@ -26,6 +26,62 @@ def weighted_mean(pairs):
     return float(sum(value * weight for value, weight in pairs) / total)
 
 
+class EpisodeTally:
+    """Per-episode totals, shared by the training collector and evaluation.
+
+    Two rewards are tracked side by side.  ``return`` / ``reward`` are the
+    training signal -- coverage rate times ``reward_scale``.  ``raw_*`` is MATE's
+    own camera-team reward: +1 per step for every loaded target a camera tracks,
+    minus the freight and bounty of every cargo the targets deliver.  The game
+    is zero-sum, so the camera team wins an episode when that sum is positive.
+    """
+
+    def __init__(self):
+        self.returns = 0.0
+        self.raw_return = 0.0
+        self.steps = 0
+        self.rewards = []
+        self.coverage = []
+
+    def add(self, reward, info):
+        self.returns += reward
+        self.raw_return += info['raw_reward']
+        self.steps += info['env_steps']
+        # A decision's reward is already its mean over the MATE steps it held,
+        # so the per-step reward is weighted the same way coverage is.
+        self.rewards.append((reward, info['env_steps']))
+        self.coverage.append((info['coverage_rate'], info['env_steps']))
+
+    def finish(self):
+        steps = max(self.steps, 1)
+        return {
+            'return': self.returns,
+            'reward': weighted_mean(self.rewards),
+            'raw_return': self.raw_return,
+            'raw_reward': self.raw_return / steps,
+            'win': float(self.raw_return > 0.0),
+            'coverage_rate': weighted_mean(self.coverage),
+        }
+
+
+def summarize_episodes(episodes, prefix):
+    """Means over finished episodes, under ``prefix/``."""
+
+    def mean(key):
+        return float(np.mean([e[key] for e in episodes]))
+
+    coverages = [e['coverage_rate'] for e in episodes]
+    return {
+        f'{prefix}/episode_return': mean('return'),
+        f'{prefix}/reward': mean('reward'),
+        f'{prefix}/raw_return': mean('raw_return'),
+        f'{prefix}/raw_reward': mean('raw_reward'),
+        f'{prefix}/win_rate': mean('win'),
+        f'{prefix}/coverage_rate': float(np.mean(coverages)),
+        f'{prefix}/coverage_rate_std': float(np.std(coverages)),
+    }
+
+
 @torch.no_grad()
 def evaluate_planner(env, planner, trajectory, episodes):
     """Whole episodes driven by online planning.  Nothing is trained here.
@@ -37,13 +93,13 @@ def evaluate_planner(env, planner, trajectory, episodes):
     beside the mean rather than hidden by a deterministic mode.
     """
 
-    coverages, returns, believed = [], [], []
+    finished, believed = [], []
     for _ in range(episodes):
         current = env.reset()
         planner.reset(env.n_agents, env.action_dim)
 
         done = False
-        total, coverage = 0.0, []
+        tally = EpisodeTally()
         while not done:
             beliefs = torch.as_tensor(
                 current['belief'], dtype=torch.float32, device=trajectory.device
@@ -62,16 +118,12 @@ def evaluate_planner(env, planner, trajectory, episodes):
             current, reward, done, info = env.step(
                 planner.to_numpy(actions), planner.to_numpy(intent)
             )
-            total += reward
-            coverage.append((info['coverage_rate'], info['env_steps']))
+            tally.add(reward, info)
 
-        returns.append(total)
-        coverages.append(weighted_mean(coverage))
+        finished.append(tally.finish())
 
     return {
-        'eval/episode_return': float(np.mean(returns)),
-        'eval/coverage_rate': float(np.mean(coverages)),
-        'eval/coverage_rate_std': float(np.std(coverages)),
+        **summarize_episodes(finished, 'eval'),
         'eval/believed_fraction': float(np.mean(believed)),
     }
 

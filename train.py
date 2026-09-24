@@ -413,6 +413,10 @@ def main():
         'coverage_rate': final['eval/coverage_rate'],
         'coverage_rate_std': final['eval/coverage_rate_std'],
         'episode_return': final['eval/episode_return'],
+        'reward': final['eval/reward'],
+        'raw_return': final['eval/raw_return'],
+        'raw_reward': final['eval/raw_reward'],
+        'win_rate': final['eval/win_rate'],
         'believed_fraction': final['eval/believed_fraction'],
         'best_periodic_coverage': best_coverage if best_coverage > float('-inf') else None,
         'wall_clock_hours': (time.time() - start) / 3600.0,
@@ -426,7 +430,10 @@ def main():
 
     print(
         f'\nfinal: coverage {results["coverage_rate"]:.4f} '
-        f'+- {results["coverage_rate_std"]:.4f} over {args.final_episodes} episodes '
+        f'+- {results["coverage_rate_std"]:.4f} | return {results["episode_return"]:.2f} '
+        f'| reward {results["reward"]:.4f} | env return {results["raw_return"]:.2f} '
+        f'| env reward {results["raw_reward"]:.4f} | win rate {results["win_rate"]:.3f} '
+        f'over {args.final_episodes} episodes '
         f'({env_steps} env steps, {results["wall_clock_hours"]:.2f} h)',
         flush=True,
     )

@@ -17,7 +17,7 @@ stays on the device.
 import numpy as np
 import torch
 
-from evaluate import weighted_mean
+from evaluate import EpisodeTally, summarize_episodes
 
 
 class PlanningCollector:
@@ -35,8 +35,7 @@ class PlanningCollector:
 
         self.current = env.reset()
         self.planner.reset(env.n_agents, env.action_dim)
-        self.episode_return = 0.0
-        self.episode_coverage = []
+        self.tally = EpisodeTally()
         self.finished_episodes = []
         self.believed = []
         self.overlap = []
@@ -82,8 +81,7 @@ class PlanningCollector:
 
             consumed += info['env_steps']
             self.steps_taken += info['env_steps']
-            self.episode_return += reward
-            self.episode_coverage.append((info['coverage_rate'], info['env_steps']))
+            self.tally.add(reward, info)
 
             slots = self.current['belief'].reshape(self.env.n_agents, self.env.n_targets, -1)
             self.believed.append(float((slots[..., -1] > 0.5).mean()))
@@ -94,14 +92,8 @@ class PlanningCollector:
             self.current = nxt
 
             if done:
-                self.finished_episodes.append(
-                    {
-                        'return': self.episode_return,
-                        'coverage_rate': weighted_mean(self.episode_coverage),
-                    }
-                )
-                self.episode_return = 0.0
-                self.episode_coverage = []
+                self.finished_episodes.append(self.tally.finish())
+                self.tally = EpisodeTally()
                 self.current = self.env.reset()
                 self.planner.reset(self.env.n_agents, self.env.action_dim)
 
@@ -114,16 +106,7 @@ class PlanningCollector:
             stats['plan/max_overlap'] = float(np.mean(self.overlap))
             self.believed, self.overlap = [], []
         if self.finished_episodes:
-            coverages = [e['coverage_rate'] for e in self.finished_episodes]
-            stats.update(
-                {
-                    'env/episode_return': float(
-                        np.mean([e['return'] for e in self.finished_episodes])
-                    ),
-                    'env/coverage_rate': float(np.mean(coverages)),
-                    'env/coverage_rate_std': float(np.std(coverages)),
-                    'env/episodes': len(self.finished_episodes),
-                }
-            )
+            stats.update(summarize_episodes(self.finished_episodes, 'env'))
+            stats['env/episodes'] = len(self.finished_episodes)
             self.finished_episodes = []
         return stats

@@ -525,6 +525,9 @@ class MATEEnv:
         scaled = self._scale_action(actions)
 
         rates = {'coverage_rate': 0.0, 'real_coverage_rate': 0.0, 'mean_transport_rate': 0.0}
+        # MATE's own camera-team reward, summed rather than averaged: it is what
+        # the zero-sum game is scored on, and an episode's sum decides who won.
+        raw_reward = 0.0
         consumed = 0
         done = False
         for _ in range(self.frame_skip):
@@ -540,6 +543,7 @@ class MATEEnv:
             # and is what this task optimizes.
             for key in rates:
                 rates[key] += float(infos[0][key])
+            raw_reward += float(infos[0]['raw_reward'])
 
             if done:
                 break
@@ -561,5 +565,5 @@ class MATEEnv:
             'target_positions': self._target_positions(),
             'search': self._search_state(),
         }
-        info = dict(rates, env_steps=consumed)
+        info = dict(rates, env_steps=consumed, raw_reward=raw_reward)
         return nxt, rates['coverage_rate'] * self.reward_scale, done, info
