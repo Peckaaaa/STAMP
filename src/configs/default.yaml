@@ -18,6 +18,9 @@ env:
   # Oracle field-of-view fusion: every camera observes the union of the team's
   # view.  Not deployable -- it is the ceiling `baseline.py` measures against.
   shared_fov: false
+  # Ablation only: belief columns held at zero, any of [first_hand, age].
+  # Empty is the full belief.
+  belief_drop: []
   reward_scale: 1.0
   seed: 0
 

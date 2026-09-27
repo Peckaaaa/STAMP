@@ -123,6 +123,7 @@ class MATEEnv:
         normalize=True,
         shared_fov=False,
         update_statistics=True,
+        belief_drop=(),
     ):
         ensure_mate_importable()
 
@@ -142,6 +143,12 @@ class MATEEnv:
         # view.  Not a deployable setting -- it is the ceiling the peer-to-peer
         # belief is measured against.
         self.shared_fov = bool(shared_fov)
+        # Ablation only: belief columns held at zero.  The width stays the same so
+        # the head and the buffer need no change; only the information is gone.
+        self.belief_drop = frozenset(belief_drop or ())
+        unknown = self.belief_drop - {'first_hand', 'age'}
+        if unknown:
+            raise ValueError(f'unknown belief_drop entries: {sorted(unknown)}')
 
         # make_environment() instead of gym.make(): it builds MultiAgentTracking
         # directly, with no checker wrapper in front of MATE's
@@ -217,6 +224,7 @@ class MATEEnv:
             + (f', comm range {self.comm_range:.0f}' if self.comm_range else '')
             + (' | shared field of view' if self.shared_fov else '')
             + ('' if self.camera_comm else ' | channel off')
+            + (f' | belief drop {sorted(self.belief_drop)}' if self.belief_drop else '')
         )
 
     def _norm_obs(self, obs):
@@ -433,6 +441,13 @@ class MATEEnv:
             beliefs[index, :, -3] = first_hand.astype(np.float64)
             beliefs[index, :, -2] = self.age[index] / self.MAX_AGE
             beliefs[index, :, -1] = merged[:, -1]
+
+        # `self.age` itself is untouched: the spatial memory the planner reads
+        # is not part of the belief, and this ablates the belief only.
+        if 'first_hand' in self.belief_drop:
+            beliefs[..., -3] = 0.0
+        if 'age' in self.belief_drop:
+            beliefs[..., -2] = 0.0
 
         # Coordinates are still in map units here, which is what the spatial
         # memory and the planner both work in.

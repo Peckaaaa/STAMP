@@ -215,6 +215,9 @@ def build_env(config, seed_offset=0):
         frame_skip=env_config['frame_skip'],
         seed=env_config['seed'] + seed_offset,
         shared_fov=env_config['shared_fov'],
+        # Read with a default: checkpoints written before the ablation existed
+        # carry an env block without it.
+        belief_drop=env_config.get('belief_drop', []),
     )
 
 
