@@ -16,6 +16,10 @@ Two kinds of ablation, because STAMP has two kinds of component:
 The full pipeline itself (`ref`) is retrained under the same budget as the
 train-time variants, so both groups are compared against a budget-matched row.
 
+The peer-to-peer channel is not ablated: every row, the full pipeline included,
+runs on the same base environment -- MATE's RestrictedCommunicationRange around
+MultiCamera, at the checkpoint's `env.comm_range`.
+
     python ablation.py list
     python ablation.py eval  --variant no_intent --checkpoint runs/stamp/seed1/checkpoint.pt \
                              --out runs/ablation/eval/no_intent/seed1.json
@@ -78,10 +82,6 @@ VARIANTS = {
         'label': 'w/o Voronoi split of the staleness map',
     },
     # --- train-time: stages 1-3 --------------------------------------------------
-    'no_comm': {
-        'kind': 'train', 'set': {'env.camera_comm': False}, 'predictor': 'flow',
-        'label': 'w/o P2P channel (own view only, no intent either)',
-    },
     'no_firsthand': {
         'kind': 'train', 'set': {'env.belief_drop': ['first_hand']}, 'predictor': 'flow',
         'label': 'w/o first-hand bit in the belief',
@@ -145,7 +145,7 @@ def score(checkpoint_path, variant, episodes, seed, device='cpu'):
         # reason as baseline.py), the flow head's samples (global torch), and
         # the MPPI candidate noise (the planner's own generator).
         episode_seed = seed + episode
-        for offset, target_agent in enumerate(env.env.opponent_agents_ordered):
+        for offset, target_agent in enumerate(env.team_env.opponent_agents_ordered):
             target_agent._np_random, _ = seeding.np_random(
                 episode_seed + 1000 * (offset + 1)
             )
@@ -189,6 +189,7 @@ def score(checkpoint_path, variant, episodes, seed, device='cpu'):
         'checkpoint': checkpoint_path,
         'train_seed': checkpoint['config']['env']['seed'],
         'scenario': config['env']['scenario'],
+        'comm_range': config['env']['comm_range'],
         'eval_seed': seed,
         'episodes': episodes,
         'coverage_rate': float(np.mean(coverage)),
@@ -215,6 +216,19 @@ def report(root, markdown_out=None):
     if 'full' not in rows:
         raise SystemExit(f'no full-pipeline rows under {root}')
     full = rows['full']
+    # Rows of variants no longer in the study (no_comm) are left on disk but
+    # kept out of the table.
+    for variant in sorted(set(rows) - set(VARIANTS)):
+        print(f'skipping {variant}: not an ablation variant any more')
+        del rows[variant]
+
+    first = next(iter(full.values()))
+    reach = first.get('comm_range')
+    header = (
+        f"{first['scenario']}, {first['episodes']} episodes per row, episode seed "
+        f"{first['eval_seed']}. Channel: MATE RestrictedCommunicationRange around "
+        f"MultiCamera, {f'range {reach:g}' if reach else 'unlimited range'}."
+    )
 
     keys = ['coverage_rate', 'acquisition', 'union', 'max_overlap']
     lines = [
@@ -222,7 +236,7 @@ def report(root, markdown_out=None):
         '| Acquisition | Union | Max overlap |',
         '|---|---|---|---|---|---|---|---|---|',
     ]
-    order = [v for v in VARIANTS if v in rows] + sorted(set(rows) - set(VARIANTS))
+    order = [v for v in VARIANTS if v in rows]
     summary = {}
     for variant in order:
         by_seed = rows[variant]
@@ -255,12 +269,13 @@ def report(root, markdown_out=None):
         )
 
     table = '\n'.join(lines)
+    print(header + '\n')
     print(table)
     with open(os.path.join(root, 'summary.json'), 'w', encoding='utf-8') as handle:
         json.dump(summary, handle, indent=1)
     if markdown_out:
         with open(markdown_out, 'w', encoding='utf-8') as handle:
-            handle.write(table + '\n')
+            handle.write(header + '\n\n' + table + '\n')
 
 
 # ----------------------------------------------------------------------- main

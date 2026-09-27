@@ -8,15 +8,17 @@
 #
 # Every variant, the full pipeline included, is trained here under the same step
 # budget and seeds, so the comparison is budget-matched:
-#   train-time  full, no_comm, no_firsthand, no_age, no_consensus -> runs/abl_<v>/seed<N>
+#   train-time  full, no_firsthand, no_age, no_consensus -> runs/abl_<v>/seed<N>
 #   eval-time   no_flow, no_soft, no_intent, no_search, no_voronoi, scored on the
 #               abl_full checkpoints (the component lives in the planner, not in
 #               any weights), so each is paired with the full row.
-# Every row replays the same episode seeds.  Training logs to wandb, project
-# $WANDB_PROJECT, one group per variant.
+# Every row replays the same episode seeds and runs on the same base environment:
+# the camera channel is always on, through MATE's RestrictedCommunicationRange at
+# env.comm_range, so it is not an ablation variant.  Training logs to wandb,
+# project $WANDB_PROJECT, one group per variant.
 #
 # Knobs (environment): SEEDS, STEPS, EPISODES, EVAL_SEED, JOBS, THREADS,
-#                      FULL_TAG, WANDB_PROJECT, SESSION
+#                      FULL_TAG, OUT, WANDB_PROJECT, SESSION
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -32,15 +34,14 @@ JOBS="${JOBS:-48}"                 # parallel eval processes
 THREADS="${THREADS:-4}"            # torch/OMP threads per process
 FULL_TAG="${FULL_TAG:-abl_full}"   # checkpoints the eval-time variants are scored on
 SESSION="${SESSION:-ablation}"
-OUT="runs/ablation/${FULL_TAG}"
+OUT="${OUT:-runs/ablation/${FULL_TAG}}"   # eval rows and ABLATION.md
 
-TRAIN_VARIANTS="full no_comm no_firsthand no_age no_consensus"
+TRAIN_VARIANTS="full no_firsthand no_age no_consensus"
 EVAL_VARIANTS="no_flow no_soft no_intent no_search no_voronoi"
 
 train_overrides() {
   case "$1" in
     full)         echo '' ;;
-    no_comm)      echo '--set=env.camera_comm=false' ;;
     no_firsthand) echo '--set=env.belief_drop=["first_hand"]' ;;
     no_age)       echo '--set=env.belief_drop=["age"]' ;;
     no_consensus) echo '--set=trajectory.consensus_weight=0.0' ;;
@@ -77,7 +78,7 @@ cmd_tmux() {
     exit 1
   fi
   local repo; repo="$(pwd)"
-  local knobs="SEEDS='$SEEDS' STEPS=$STEPS EPISODES=$EPISODES EVAL_SEED=$EVAL_SEED JOBS=$JOBS THREADS=$THREADS FULL_TAG=$FULL_TAG WANDB_PROJECT=$WANDB_PROJECT"
+  local knobs="SEEDS='$SEEDS' STEPS=$STEPS EPISODES=$EPISODES EVAL_SEED=$EVAL_SEED JOBS=$JOBS THREADS=$THREADS FULL_TAG=$FULL_TAG OUT=$OUT WANDB_PROJECT=$WANDB_PROJECT"
   local first=1
   for v in $TRAIN_VARIANTS; do
     for s in $SEEDS; do

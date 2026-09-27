@@ -48,6 +48,16 @@ def build_camera_agents(name, num_cameras, seed, memory_period=None):
     return prototype.spawn(num_cameras)
 
 
+def default_comm_range():
+    import yaml
+
+    path = os.path.join(
+        os.path.dirname(os.path.abspath(__file__)), 'src', 'configs', 'default.yaml'
+    )
+    with open(path) as handle:
+        return yaml.safe_load(handle)['env']['comm_range']
+
+
 def run_rule_agent(
     scenario,
     agent_name,
@@ -58,6 +68,7 @@ def run_rule_agent(
     communicate,
     memory_period=None,
     action_noise=0.0,
+    comm_range=None,
 ):
     """Whole episodes of a built-in camera agent against MATE's greedy targets.
 
@@ -76,9 +87,15 @@ def run_rule_agent(
     import mate
     from gymnasium.utils import seeding
     from mate.agents import GreedyTargetAgent
+    from mate.wrappers import RestrictedCommunicationRange
 
     base_env = mate.make_environment(config=scenario, max_episode_steps=max_episode_steps)
-    env = mate.MultiCamera(base_env, target_agent=GreedyTargetAgent())
+    team_env = mate.MultiCamera(base_env, target_agent=GreedyTargetAgent())
+    # The same channel the proposed pipeline is trained under, so the message
+    # round is compared at equal reach.  Outside MultiCamera, which would drop it.
+    env = RestrictedCommunicationRange(
+        team_env, range_limit=float(comm_range) if comm_range else float('inf')
+    )
     unwrapped = env.unwrapped
     counts = (unwrapped.num_cameras, unwrapped.num_targets, unwrapped.num_obstacles)
 
@@ -101,7 +118,7 @@ def run_rule_agent(
         # settings replay the same opponent behaviour and not merely the same
         # starting layout; without it the paired delta carries the targets'
         # randomness as noise.
-        for offset, target_agent in enumerate(env.opponent_agents_ordered):
+        for offset, target_agent in enumerate(team_env.opponent_agents_ordered):
             # Not ``target_agent.seed()``: that path ends in
             # ``action_space.seed(self.np_random.integers(...))``, and this
             # gymnasium rejects the numpy integer it hands over -- the same kind
@@ -124,7 +141,9 @@ def run_rule_agent(
             union_visibility.append(visible.any(axis=0).mean())
 
             if communicate:
-                joint_action = mate.group_step(unwrapped, agents, observation, infos)
+                # Through the wrapped env, not ``unwrapped``, or the range
+                # filter never sees the agents' messages.
+                joint_action = mate.group_step(env, agents, observation, infos)
             else:
                 mate.group_observe(agents, observation, infos)
                 joint_action = mate.group_act(agents, observation, infos)
@@ -304,6 +323,7 @@ def write_results(args, scenario, rows):
             existing.get('scenario') == scenario
             and existing.get('episodes') == args.episodes
             and existing.get('seed') == args.seed
+            and existing.get('comm_range') == args.comm_range
         ):
             merged = {row['policy']: row for row in existing.get('rows', [])}
 
@@ -316,6 +336,7 @@ def write_results(args, scenario, rows):
                 'episodes': args.episodes,
                 'max_episode_steps': args.max_episode_steps,
                 'seed': args.seed,
+                'comm_range': args.comm_range,
                 'rows': list(merged.values()),
             },
             handle,
@@ -349,6 +370,13 @@ def parse_args():
         type=int,
         default=None,
         help="GreedyCameraAgent's memory window in steps (MATE's default is 25)",
+    )
+    parser.add_argument(
+        '--comm-range',
+        type=float,
+        default=None,
+        help="rule agents' message reach in map units (default: env.comm_range "
+             'from src/configs/default.yaml; 0 for unlimited)',
     )
     parser.add_argument('--checkpoint', type=str, default=None)
     parser.add_argument(
@@ -420,10 +448,13 @@ def main():
     ensure_mate_importable()
     scenario = resolve_scenario(args.scenario)
     settings = SETTINGS if args.matrix else (args.setting,)
+    if args.comm_range is None:
+        args.comm_range = default_comm_range()
 
     print(
         f'{scenario} | {args.episodes} episodes x {args.max_episode_steps} steps '
-        f'| seed {args.seed} | setting {"matrix" if args.matrix else args.setting}'
+        f'| seed {args.seed} | setting {"matrix" if args.matrix else args.setting} '
+        f'| comm range {args.comm_range or "unlimited"}'
     )
 
     rows = []
@@ -446,6 +477,7 @@ def main():
                 shared_fov=shared_fov,
                 communicate=communicate,
                 memory_period=args.greedy_memory,
+                comm_range=args.comm_range,
             )
             print(
                 f'  {label:>24} / {setting:<10} '

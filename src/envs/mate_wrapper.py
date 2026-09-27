@@ -31,7 +31,6 @@ import torch
 
 from envs.config_resolver import ensure_mate_importable, resolve_scenario
 from envs.observation_fusion import (
-    camera_positions_from_state,
     camera_target_slots,
     fuse_camera_observations,
     merge_slots,
@@ -129,13 +128,16 @@ class MATEEnv:
 
         import mate
         from mate.agents import GreedyTargetAgent
+        from mate.wrappers import RestrictedCommunicationRange
 
         self.scenario = resolve_scenario(scenario)
         self.camera_comm = camera_comm
-        # None means every teammate is a neighbour.  A finite range is measured
-        # between camera locations, which are fixed physical facts about the
-        # deployment rather than anything a camera has to perceive.
+        # The channel always runs through MATE's RestrictedCommunicationRange,
+        # measured between camera locations, which are fixed physical facts about
+        # the deployment rather than anything a camera has to perceive.  None
+        # means every teammate is a neighbour: the same wrapper, unlimited reach.
         self.comm_range = comm_range
+        self.range_limit = float(comm_range) if comm_range else float('inf')
         self.reward_scale = reward_scale
         self.max_episode_steps = max_episode_steps
         self.frame_skip = int(frame_skip)
@@ -156,7 +158,12 @@ class MATEEnv:
         base_env = mate.make_environment(
             config=self.scenario, max_episode_steps=max_episode_steps
         )
-        self.env = mate.MultiCamera(base_env, target_agent=GreedyTargetAgent())
+        #: The camera-team view, for what only MultiCamera exposes (the target
+        #: agents); gymnasium wrappers no longer forward attributes to it.
+        self.team_env = mate.MultiCamera(base_env, target_agent=GreedyTargetAgent())
+        # Outside MultiCamera, not inside: SingleTeamHelper re-wraps the bare
+        # MultiAgentTracking and would silently drop a message filter below it.
+        self.env = RestrictedCommunicationRange(self.team_env, range_limit=self.range_limit)
 
         unwrapped = self.env.unwrapped
         self.n_agents = unwrapped.num_cameras
@@ -257,17 +264,26 @@ class MATEEnv:
         return self.action_low + 0.5 * (actions + 1.0) * (self.action_high - self.action_low)
 
     def _neighbours(self):
-        """``(n_agents, n_agents)`` boolean: who is close enough to talk to whom."""
+        """``(n_agents, n_agents)`` boolean: who is close enough to talk to whom.
+
+        Asked of the same filter MATE's RestrictedCommunicationRange applies to
+        the channel, so the staleness map and the messages agree on the graph.
+        """
 
         connected = ~np.eye(self.n_agents, dtype=bool)
-        if not self.comm_range:
-            return connected
 
-        positions = camera_positions_from_state(
-            self.env.unwrapped.state(), self.n_agents
-        )
-        distance = np.linalg.norm(positions[:, None, :] - positions[None, :, :], axis=-1)
-        return connected & (distance <= self.comm_range)
+        from mate.utils import Message, Team
+        from mate.wrappers import RestrictedCommunicationRange
+
+        unwrapped = self.env.unwrapped
+        for sender, recipient in zip(*np.nonzero(connected)):
+            probe = Message(
+                sender=int(sender), recipient=int(recipient), content=None, team=Team.CAMERA
+            )
+            connected[sender, recipient] = RestrictedCommunicationRange.filter(
+                unwrapped, probe, range_limit=self.range_limit
+            )
+        return connected
 
     def camera_states(self):
         """``(n_agents, 9)`` raw private camera states, unnormalized.
@@ -366,10 +382,11 @@ class MATEEnv:
     def _exchange_slots(self, raw_observation, intents):
         """Run one peer-to-peer round and return what each camera received.
 
-        Every camera addresses its neighbours individually -- ``recipient=j``,
-        not a broadcast -- so routing, and therefore any communication-range,
-        delay or dropout wrapper MATE has applied, is done by the environment,
-        and the receiver knows which camera each block came from.
+        Every camera addresses each teammate individually -- ``recipient=j``,
+        not a broadcast -- and the environment decides what arrives: MATE's
+        RestrictedCommunicationRange drops whatever is out of range, as would
+        any delay or dropout wrapper stacked on it.  The receiver knows which
+        camera each block came from.
         """
 
         own = camera_target_slots(
@@ -382,17 +399,18 @@ class MATEEnv:
 
         from mate.utils import Message, Team
 
-        connected = self._neighbours()
         outgoing = []
         for sender in range(self.n_agents):
             payload = np.concatenate(
                 [own[sender].astype(np.float64).ravel(), intents[sender].astype(np.float64)]
             )
-            for recipient in np.flatnonzero(connected[sender]):
+            for recipient in range(self.n_agents):
+                if recipient == sender:
+                    continue
                 outgoing.append(
                     Message(
                         sender=sender,
-                        recipient=int(recipient),
+                        recipient=recipient,
                         content=payload.copy(),
                         team=Team.CAMERA,
                     )

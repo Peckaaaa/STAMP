@@ -46,5 +46,12 @@ class MessageFilter(gym.Wrapper, metaclass=WrapperMeta):
         if isinstance(messages, Message):
             messages = (messages,)
 
-        messages = list(filter(self._filter, self.route_messages(messages)))
+        # gymnasium>=1.0 wrappers no longer forward unknown attributes to the
+        # inner environment, so route through the base environment explicitly.
+        messages = list(filter(self._filter, self.unwrapped.route_messages(messages)))
         self.env.send_messages(messages)
+
+    def receive_messages(self, *args, **kwargs):
+        """Retrieve the messages to recipients from the wrapped environment."""
+
+        return self.env.receive_messages(*args, **kwargs)

@@ -336,6 +336,11 @@ the official API, it raises.
 down to the base `MultiAgentTracking` and wraps that, so
 `MultiCamera(SharedFieldOfView(base))` loses the wrapper without an error.
 Oracle fusion is implemented directly in `src/envs/observation_fusion.py`.
+The same applies to MATE's message filters: `comm_range` is enforced by
+`RestrictedCommunicationRange` wrapped *outside* `MultiCamera`, and
+`MessageFilter` in `MATE-main` is patched to reach `route_messages` and
+`receive_messages` explicitly, since gymnasium 1.x wrappers no longer forward
+attributes.
 
 **`displacement_scale` is tied to the scenario.** Targets move about 0.013
 belief units per step per axis in `MATE-4v8-9`, and the labels are scaled by 75
