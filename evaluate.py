@@ -1,11 +1,16 @@
 """Coverage-rate evaluation, standalone or called from training.
 
     python evaluate.py --checkpoint runs/v1/seed1/best.pt --episodes 50
+    python evaluate.py --checkpoint runs/v1/seed1/best.pt --episodes 3 --render
+
+``--render`` opens MATE's own 2D window and draws every step, so it needs a
+display and pyglet (see requirements.txt); nothing else in this file does.
 """
 
 import argparse
 import os
 import sys
+import time
 
 import numpy as np
 import torch
@@ -83,7 +88,7 @@ def summarize_episodes(episodes, prefix):
 
 
 @torch.no_grad()
-def evaluate_planner(env, planner, trajectory, episodes):
+def evaluate_planner(env, planner, trajectory, episodes, render=False, fps=0.0):
     """Whole episodes driven by online planning.  Nothing is trained here.
 
     The planner is stateful within an episode -- it warm-starts each decision
@@ -91,12 +96,23 @@ def evaluate_planner(env, planner, trajectory, episodes):
     every episode boundary.  The trajectory head still *samples*, so this is a
     stochastic policy by construction; the spread across episodes is reported
     beside the mean rather than hidden by a deterministic mode.
+
+    ``render`` draws MATE's 2D scene after every reset and step, at most ``fps``
+    frames a second (0 draws as fast as the planner runs), and prints each
+    episode's coverage as it ends.
     """
 
+    def draw():
+        if render:
+            env.render()
+            if fps > 0.0:
+                time.sleep(1.0 / fps)
+
     finished, believed = [], []
-    for _ in range(episodes):
+    for episode in range(episodes):
         current = env.reset()
         planner.reset(env.n_agents, env.action_dim)
+        draw()
 
         done = False
         tally = EpisodeTally()
@@ -119,8 +135,15 @@ def evaluate_planner(env, planner, trajectory, episodes):
                 planner.to_numpy(actions), planner.to_numpy(intent)
             )
             tally.add(reward, info)
+            draw()
 
         finished.append(tally.finish())
+        if render:
+            print(
+                f"episode {episode + 1}/{episodes}: "
+                f"coverage {finished[-1]['coverage_rate']:.4f}",
+                flush=True,
+            )
 
     return {
         **summarize_episodes(finished, 'eval'),
@@ -135,6 +158,17 @@ def parse_args():
     parser.add_argument('--scenario', type=str, default=None, help='override the trained scenario')
     parser.add_argument('--seed', type=int, default=12345)
     parser.add_argument('--device', type=str, default='cpu')
+    parser.add_argument(
+        '--render',
+        action='store_true',
+        help="show MATE's 2D window while evaluating (needs a display and pyglet)",
+    )
+    parser.add_argument(
+        '--fps',
+        type=float,
+        default=10.0,
+        help='frame-rate cap for --render; 0 draws as fast as the planner runs',
+    )
     return parser.parse_args()
 
 
@@ -158,7 +192,9 @@ def main():
     planner = build_planner(config, device=args.device)
 
     print(env.describe())
-    metrics = evaluate_planner(env, planner, trajectory, args.episodes)
+    metrics = evaluate_planner(
+        env, planner, trajectory, args.episodes, render=args.render, fps=args.fps
+    )
     for key, value in metrics.items():
         print(f'{key}={value:.4f}')
     env.close()
